@@ -11,57 +11,45 @@ echo "  ============================================"
 echo ""
 
 # Kill any existing processes on ports 8000, 3000, 3001
-echo "[1/6] Cleaning up old processes..."
+echo "[1/4] Cleaning up old processes..."
 kill $(lsof -t -i:8000) 2>/dev/null || true
 kill $(lsof -t -i:3000) 2>/dev/null || true
 kill $(lsof -t -i:3001) 2>/dev/null || true
 sleep 1
 
-# Install backend dependencies
-echo "[2/6] Installing backend dependencies..."
-cd "$SCRIPT_DIR/backend"
-if [ ! -d "venv" ]; then
-    python3 -m venv venv
+# Check if dependencies are installed, if not install them
+if [ ! -d "$SCRIPT_DIR/frontend/node_modules" ]; then
+    echo "[*] Frontend dependencies not found, installing..."
+    cd "$SCRIPT_DIR/frontend" && npm install
 fi
-source venv/bin/activate
-pip install -r requirements.txt --quiet
-cd "$SCRIPT_DIR"
-
-# Install frontend dependencies
-echo "[3/6] Installing frontend dependencies..."
-cd "$SCRIPT_DIR/frontend"
-npm install --silent
-cd "$SCRIPT_DIR"
-
-# Install WhatsApp bridge dependencies
-echo "[4/6] Installing WhatsApp bridge dependencies..."
-cd "$SCRIPT_DIR/whatsapp-bridge"
-npm install --silent
-cd "$SCRIPT_DIR"
+if [ ! -d "$SCRIPT_DIR/whatsapp-bridge/node_modules" ]; then
+    echo "[*] WhatsApp bridge dependencies not found, installing..."
+    cd "$SCRIPT_DIR/whatsapp-bridge" && npm install
+fi
+if ! python3 -c "import fastapi" 2>/dev/null; then
+    echo "[*] Backend dependencies not found, installing..."
+    cd "$SCRIPT_DIR/backend" && python3 -m pip install -r requirements.txt
+fi
 
 # Start Backend (FastAPI)
-echo "[5/6] Starting Backend (port 8000)..."
+echo "[2/4] Starting Backend (port 8000)..."
 cd "$SCRIPT_DIR/backend"
-source venv/bin/activate
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
-cd "$SCRIPT_DIR"
 sleep 3
 
 # Start WhatsApp Bridge
-echo "[5/6] Starting WhatsApp Bridge (port 3001)..."
+echo "[3/4] Starting WhatsApp Bridge (port 3001)..."
 cd "$SCRIPT_DIR/whatsapp-bridge"
 node index.js &
 BRIDGE_PID=$!
-cd "$SCRIPT_DIR"
 sleep 2
 
 # Start Frontend (Next.js)
-echo "[6/6] Starting Frontend (port 3000)..."
+echo "[4/4] Starting Frontend (port 3000)..."
 cd "$SCRIPT_DIR/frontend"
-npm run dev &
+npx next dev &
 FRONTEND_PID=$!
-cd "$SCRIPT_DIR"
 sleep 3
 
 echo ""

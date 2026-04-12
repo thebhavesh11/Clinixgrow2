@@ -24,8 +24,7 @@
       "onAutoForward": "silent"
     }
   },
-  "postCreateCommand": "cd backend && python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt && cd ../frontend && npm install && cd ../whatsapp-bridge && npm install",
-  "postAttachCommand": "echo '✅ Ready! Run: bash start.sh'",
+  "postCreateCommand": "bash .devcontainer/setup.sh",
   "customizations": {
     "vscode": {
       "extensions": [
