@@ -22,6 +22,7 @@ let latestQR = null;
 let isConnected = false;
 let connectionInfo = null;
 let initError = null;
+let readyTimestamp = null; // Track when client became ready — ignore messages before this
 
 // ── AI Settings Cache (avoids hitting backend on every message) ──────
 let _cachedSettings = null;
@@ -106,6 +107,8 @@ function initClient() {
         isConnected = true;
         latestQR = null;
         initError = null;
+        readyTimestamp = Math.floor(Date.now() / 1000); // Unix timestamp in seconds
+        console.log(`[Bridge] Ready timestamp set: ${readyTimestamp} — will ignore older messages`);
         try {
             connectionInfo = client.info;
             console.log('[Bridge] Connected as:', connectionInfo?.pushname);
@@ -133,6 +136,11 @@ function initClient() {
     client.on('message', async (msg) => {
         try {
             if (msg.fromMe) return;
+
+            // Skip old messages that arrived before the client was ready
+            if (readyTimestamp && msg.timestamp && msg.timestamp < readyTimestamp) {
+                return; // Silently ignore old messages
+            }
 
             // Skip status updates, broadcasts, and newsletters — never interact with these
             if (msg.from === 'status@broadcast' || msg.from.includes('@broadcast') || msg.from.includes('@newsletter')) return;
