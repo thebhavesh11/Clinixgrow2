@@ -1,16 +1,14 @@
 'use client';
 import { useState, useEffect } from 'react';
-const API = '/api';
+import { API, safeFetch, timeAgo, scoreColor } from '../lib/utils';
 
 export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => { fetch(`${API}/leads`).then(r => r.json()).then(setLeads).catch(() => {}).finally(() => setLoading(false)); }, []);
+  useEffect(() => { safeFetch(`${API}/leads`).then(([d]) => { if (Array.isArray(d)) setLeads(d); }).finally(() => setLoading(false)); }, []);
   const filtered = filter === 'all' ? leads : leads.filter(l => l.lead_status === filter);
-  const timeAgo = dt => { if (!dt) return ''; const m = Math.floor((Date.now()-new Date(dt).getTime())/60000); if (m<1) return 'Just now'; if (m<60) return `${m}m ago`; const h = Math.floor(m/60); if (h<24) return `${h}h ago`; return `${Math.floor(h/24)}d ago`; };
-  const scoreColor = s => s >= 80 ? 'var(--hot)' : s >= 50 ? 'var(--warm)' : 'var(--cold)';
 
   if (loading) return <div className="loading"><div className="spinner"></div>Loading leads...</div>;
 
@@ -35,7 +33,7 @@ export default function Leads() {
             <div><div style={{ fontWeight: 600, fontSize: 13 }}>{l.name}</div><div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{l.phone_number}</div></div>
           </div></td>
           <td><div className="score-display"><span className="score-number" style={{ color: scoreColor(l.lead_score) }}>{l.lead_score}/100</span><div className="score-bar"><div className="score-bar-fill" style={{ width: `${l.lead_score}%`, background: scoreColor(l.lead_score) }}></div></div></div></td>
-          <td><span className={`lead-badge ${l.lead_status}`}><span className="badge-dot"></span>{l.lead_status.toUpperCase()}</span></td>
+          <td><span className={`lead-badge ${l.lead_status}`}><span className="badge-dot"></span>{(l.lead_status || 'new').toUpperCase()}</span></td>
           <td style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{timeAgo(l.created_at)}</td>
           <td><div style={{ display: 'flex', gap: 6 }}><button className="btn btn-secondary btn-sm">View</button><button className="btn btn-primary btn-sm">Call</button></div></td>
         </tr>))}

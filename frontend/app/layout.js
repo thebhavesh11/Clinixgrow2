@@ -3,8 +3,9 @@ import './globals.css';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
+import ErrorBoundary from './components/ErrorBoundary';
+import { API, safeFetch } from './lib/utils';
 
-const API = '/api';
 const NAV_ITEMS = [
   { section: 'MAIN' },
   { href: '/', icon: '◎', label: 'Dashboard' },
@@ -24,12 +25,10 @@ export default function RootLayout({ children }) {
   useEffect(() => {
     async function check() {
       try {
-        const [waRes, dashRes] = await Promise.all([
-          fetch(`${API}/whatsapp/status`).then(r => r.json()).catch(() => ({ connected: false })),
-          fetch(`${API}/dashboard`).then(r => r.json()).catch(() => null),
-        ]);
-        setHealth({ whatsapp: waRes?.connected || false, api: true });
-        if (dashRes) setCounts({ conversations: dashRes.active_conversations || 0, leads: dashRes.total_leads || 0 });
+        const [waData] = await safeFetch(`${API}/whatsapp/status`);
+        const [dashData] = await safeFetch(`${API}/dashboard`);
+        setHealth({ whatsapp: waData?.connected || false, api: true });
+        if (dashData) setCounts({ conversations: dashData.active_conversations || 0, leads: dashData.total_leads || 0 });
       } catch { setHealth(h => ({ ...h, api: false })); }
     }
     check();
@@ -77,7 +76,9 @@ export default function RootLayout({ children }) {
                 <span className={`status-badge ${health.whatsapp ? 'live' : 'error'}`}><span className="dot"></span>{health.whatsapp ? 'WhatsApp Live' : 'WhatsApp Offline'}</span>
               </div>
             </div>
-            <div className="page-body">{children}</div>
+            <div className="page-body">
+              <ErrorBoundary>{children}</ErrorBoundary>
+            </div>
           </main>
         </div>
       </body>

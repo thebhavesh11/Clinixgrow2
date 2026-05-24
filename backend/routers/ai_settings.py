@@ -1,5 +1,6 @@
 """AI Settings CRUD router with API key validation."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -7,6 +8,8 @@ from database import get_db
 from models import AISetting
 from schemas import AISettingCreate, AISettingUpdate, AISettingResponse
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ai-settings", tags=["AI Settings"])
 
@@ -53,6 +56,7 @@ async def update_ai_settings(data: AISettingUpdate, db: AsyncSession = Depends(g
         setattr(settings, key, value)
     await db.flush()
     await db.refresh(settings)
+    logger.info(f"[AI Settings] Updated: provider={settings.provider}, model={settings.model}")
     return settings
 
 
@@ -98,6 +102,7 @@ async def validate_api_key(data: ValidateKeyRequest):
 
     except Exception as e:
         error_msg = str(e)
+        logger.warning(f"[AI Settings] Validation failed for {provider}: {type(e).__name__}: {error_msg[:200]}")
         if "auth" in error_msg.lower() or "api key" in error_msg.lower() or "invalid" in error_msg.lower():
             return ValidateKeyResponse(valid=False, message="Invalid API key. Please check and try again.")
         elif "model" in error_msg.lower():

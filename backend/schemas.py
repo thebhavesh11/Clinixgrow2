@@ -1,6 +1,6 @@
 """Pydantic schemas for request/response validation."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from datetime import datetime
 
@@ -48,6 +48,38 @@ class AISettingBase(BaseModel):
     reply_to_contacts: int = 1
     auto_handover: int = 0
     handover_after: int = 10
+    wa_connection_mode: str = "qr"
+    wa_app_id: str = ""
+    wa_app_secret: str = ""
+    wa_phone_number_id: str = ""
+    wa_access_token: str = ""
+    wa_verify_token: str = ""
+    wa_business_account_id: str = ""
+
+    @field_validator("temperature")
+    @classmethod
+    def clamp_temperature(cls, v):
+        return max(0.0, min(2.0, v))
+
+    @field_validator("max_tokens")
+    @classmethod
+    def clamp_max_tokens(cls, v):
+        return max(1, min(8000, v))
+
+    @field_validator("reply_delay")
+    @classmethod
+    def clamp_reply_delay(cls, v):
+        return max(0, min(120, v))
+
+    @field_validator("handover_after")
+    @classmethod
+    def clamp_handover_after(cls, v):
+        return max(1, min(1000, v))
+
+    @field_validator("group_replies", "typing_indicator", "reply_to_contacts", "auto_handover")
+    @classmethod
+    def clamp_toggle(cls, v):
+        return 1 if v else 0
 
 
 class AISettingCreate(AISettingBase):
@@ -61,7 +93,7 @@ class AISettingUpdate(AISettingBase):
 class AISettingResponse(AISettingBase):
     id: int
     business_id: int
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -144,4 +176,3 @@ class WhatsAppWebhook(BaseModel):
     name: Optional[str] = "Unknown"
     business_id: int = 1
     is_group: bool = False
-

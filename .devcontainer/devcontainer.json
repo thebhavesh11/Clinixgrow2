@@ -13,15 +13,18 @@
   "portsAttributes": {
     "3000": {
       "label": "Frontend (Next.js)",
-      "onAutoForward": "openBrowser"
+      "onAutoForward": "openBrowser",
+      "visibility": "public"
     },
     "8000": {
       "label": "Backend (FastAPI)",
-      "onAutoForward": "silent"
+      "onAutoForward": "notify",
+      "visibility": "public"
     },
     "3001": {
       "label": "WhatsApp Bridge",
-      "onAutoForward": "silent"
+      "onAutoForward": "silent",
+      "visibility": "private"
     }
   },
   "postCreateCommand": "bash .devcontainer/setup.sh",
@@ -30,7 +33,10 @@
       "extensions": [
         "ms-python.python",
         "dbaeumer.vscode-eslint"
-      ]
+      ],
+      "settings": {
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
     }
   }
 }

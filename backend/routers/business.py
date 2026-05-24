@@ -1,11 +1,14 @@
 """Business Knowledge Base CRUD router."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_db
 from models import Business
 from schemas import BusinessCreate, BusinessUpdate, BusinessResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/business", tags=["Business"])
 
@@ -27,6 +30,7 @@ async def create_business(data: BusinessCreate, db: AsyncSession = Depends(get_d
     db.add(business)
     await db.flush()
     await db.refresh(business)
+    logger.info(f"[Business] Created: {business.name!r}")
     return business
 
 
@@ -41,4 +45,5 @@ async def update_business(data: BusinessUpdate, db: AsyncSession = Depends(get_d
         setattr(business, key, value)
     await db.flush()
     await db.refresh(business)
+    logger.info(f"[Business] Updated: {business.name!r}")
     return business

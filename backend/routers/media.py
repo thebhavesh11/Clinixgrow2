@@ -3,6 +3,7 @@
 import os
 import uuid
 import shutil
+import logging
 from pathlib import Path
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,10 +14,15 @@ from schemas import BusinessMediaResponse, BusinessMediaUpdate
 from typing import List
 from fastapi.responses import FileResponse
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api/media", tags=["media"])
 
 UPLOAD_DIR = Path(__file__).resolve().parent.parent / "uploads"
 UPLOAD_DIR.mkdir(exist_ok=True)
+
+# Max upload size: 50MB
+MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 
 # Map extensions to file types
 EXT_MAP = {
@@ -50,13 +56,23 @@ async def upload_media(
     if not file_type:
         raise HTTPException(400, f"Unsupported file type: {ext}")
 
+    # Read file content and check size
+    content = await file.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"File too large. Maximum size is {MAX_UPLOAD_BYTES // (1024*1024)}MB")
+
     # Generate unique filename
     unique_name = f"{uuid.uuid4().hex}{ext}"
     file_path = UPLOAD_DIR / unique_name
 
     # Save file to disk
-    with open(file_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
+    try:
+        with open(file_path, "wb") as f:
+            f.write(content)
+        logger.info(f"[Media] Saved file: {unique_name} ({len(content)} bytes)")
+    except Exception as e:
+        logger.error(f"[Media] Failed to save file: {type(e).__name__}: {e}")
+        raise HTTPException(500, "Failed to save file")
 
     # Save record
     media = BusinessMedia(
@@ -90,6 +106,7 @@ async def update_media(
         media.description = data.description
     await db.flush()
     await db.refresh(media)
+    logger.info(f"[Media] Updated media id={media_id}: name={media.name!r}")
     return media
 
 
@@ -104,8 +121,9 @@ async def delete_media(media_id: int, db: AsyncSession = Depends(get_db)):
     try:
         if os.path.exists(media.file_path):
             os.remove(media.file_path)
-    except Exception:
-        pass
+            logger.info(f"[Media] Deleted file from disk: {media.file_path}")
+    except Exception as e:
+        logger.warning(f"[Media] Failed to delete file from disk: {type(e).__name__}: {e}")
 
     await db.delete(media)
     await db.flush()

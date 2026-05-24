@@ -1,10 +1,12 @@
 """Automation engine — orchestrates message processing pipeline."""
 
 import os
+import re
+import json
 import asyncio
 import logging
 import httpx
-from collections import defaultdict
+from collections import OrderedDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from models import Lead, Conversation, Message, AISetting, Business, BusinessMedia
@@ -15,14 +17,29 @@ BRIDGE_URL = os.getenv("WHATSAPP_BRIDGE_URL", "http://localhost:3001")
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 
 # Per-phone lock: ensures messages from the same customer are processed one at a time
-_phone_locks: dict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# Uses OrderedDict with a max cap to prevent unbounded memory growth
+_MAX_PHONE_LOCKS = 10000
+_phone_locks: OrderedDict[str, asyncio.Lock] = OrderedDict()
+
+
+def _get_phone_lock(phone: str) -> asyncio.Lock:
+    """Get or create a lock for a phone number, with LRU eviction."""
+    if phone in _phone_locks:
+        _phone_locks.move_to_end(phone)
+        return _phone_locks[phone]
+    # Evict oldest entries if over capacity
+    while len(_phone_locks) >= _MAX_PHONE_LOCKS:
+        _phone_locks.popitem(last=False)
+    _phone_locks[phone] = asyncio.Lock()
+    return _phone_locks[phone]
 
 
 async def process_incoming_message(
     phone: str, message: str, name: str, business_id: int, db: AsyncSession
 ) -> dict:
     """Process an incoming WhatsApp message end-to-end (sequential per phone)."""
-    async with _phone_locks[phone]:
+    lock = _get_phone_lock(phone)
+    async with lock:
         return await _process_message_inner(phone, message, name, business_id, db)
 
 
@@ -104,30 +121,43 @@ async def _process_message_inner(
     ai_reply = await generate_ai_reply(ai_settings, business, history, message, media_files)
 
     # 7. Parse [MEDIA:ID] tags and send media files
-    import re
     media_tags = re.findall(r'\[MEDIA:(\d+)\]', ai_reply)
     clean_reply = re.sub(r'\s*\[MEDIA:\d+\]\s*', ' ', ai_reply).strip()
 
     if media_tags:
+        # Determine connection mode
+        wa_mode = getattr(ai_settings, 'wa_connection_mode', 'qr') or 'qr'
         media_map = {m.id: m for m in media_files}
         for tag_id in media_tags:
             mid = int(tag_id)
             if mid in media_map:
                 m = media_map[mid]
                 try:
-                    async with httpx.AsyncClient(timeout=30) as client:
-                        await client.post(
-                            f"{BRIDGE_URL}/send-media",
-                            json={
-                                "phone": phone,
-                                "mediaUrl": f"{BACKEND_URL}/api/media/file/{m.id}",
-                                "filename": m.original_filename,
-                                "caption": m.name,
-                            },
+                    if wa_mode == "cloud_api":
+                        from routers.whatsapp import send_cloud_api_media
+                        await send_cloud_api_media(
+                            phone=phone,
+                            media_url=f"{BACKEND_URL}/api/media/file/{m.id}",
+                            filename=m.original_filename,
+                            caption=m.name,
+                            settings=ai_settings,
                         )
-                    logger.info(f"[Engine] Sent media '{m.name}' to {phone}")
+                    else:
+                        async with httpx.AsyncClient(timeout=30) as client:
+                            await client.post(
+                                f"{BRIDGE_URL}/send-media",
+                                json={
+                                    "phone": phone,
+                                    "mediaUrl": f"{BACKEND_URL}/api/media/file/{m.id}",
+                                    "filename": m.original_filename,
+                                    "caption": m.name,
+                                },
+                            )
+                    logger.info(f"[Engine] Sent media '{m.name}' to {phone} via {wa_mode}")
+                except httpx.TimeoutException:
+                    logger.error(f"[Engine] Media send timed out for '{m.name}' to {phone}")
                 except Exception as e:
-                    logger.error(f"[Engine] Failed to send media: {e}")
+                    logger.error(f"[Engine] Failed to send media: {type(e).__name__}: {e}")
 
     # 8. Save AI reply (clean version without tags)
     ai_msg = Message(
@@ -155,33 +185,48 @@ async def _process_message_inner(
             logger.info(f"[Engine] Lead {lead.phone_number} auto-handed over after {ai_msg_count} AI replies")
 
     # 8c. Apply reply delay + typing indicator to avoid WhatsApp bans
+    wa_mode = getattr(ai_settings, 'wa_connection_mode', 'qr') or 'qr'
     delay = getattr(ai_settings, 'reply_delay', 0) or 0
     show_typing = getattr(ai_settings, 'typing_indicator', 0) or 0
     if delay > 0:
-        if show_typing:
+        # Typing indicator only works in QR mode (Cloud API doesn't support it)
+        if show_typing and wa_mode == "qr":
             try:
                 async with httpx.AsyncClient(timeout=5) as client:
                     await client.post(f"{BRIDGE_URL}/typing", json={"phone": phone})
                 logger.info(f"[Engine] Typing indicator sent to {phone}")
             except Exception as e:
-                logger.warning(f"[Engine] Failed to send typing: {e}")
+                logger.warning(f"[Engine] Failed to send typing: {type(e).__name__}: {e}")
         logger.info(f"[Engine] Waiting {delay}s before replying...")
         await asyncio.sleep(delay)
 
-    # 9. Send text reply via WhatsApp
+    # 9. Send text reply via WhatsApp (routes based on connection mode)
     if clean_reply:
         try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                await client.post(
-                    f"{BRIDGE_URL}/send",
-                    json={"phone": phone, "message": clean_reply},
-                )
-            logger.info(f"[Engine] Replied to {phone}: {clean_reply[:50]}...")
+            if wa_mode == "cloud_api":
+                from routers.whatsapp import _send_cloud_api_text
+                result = await _send_cloud_api_text(phone, clean_reply, ai_settings)
+                if result.get("success"):
+                    logger.info(f"[Engine] Replied to {phone} via Cloud API: {clean_reply[:50]}...")
+                else:
+                    logger.error(f"[Engine] Cloud API send failed: {result.get('error')}")
+            else:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    await client.post(
+                        f"{BRIDGE_URL}/send",
+                        json={"phone": phone, "message": clean_reply},
+                    )
+                logger.info(f"[Engine] Replied to {phone} via QR bridge: {clean_reply[:50]}...")
+        except httpx.TimeoutException:
+            logger.error(f"[Engine] Reply send timed out for {phone}")
         except Exception as e:
-            logger.error(f"[Engine] Failed to send reply: {e}")
+            logger.error(f"[Engine] Failed to send reply: {type(e).__name__}: {e}")
 
-    # 10. Score lead
-    await score_lead(lead, ai_settings, history, db)
+    # 10. Score lead (fire-and-forget — errors don't affect the reply)
+    try:
+        await score_lead(lead, ai_settings, history, db)
+    except Exception as e:
+        logger.error(f"[Engine] Lead scoring failed (non-critical): {type(e).__name__}: {e}")
 
     return {"reply": clean_reply, "lead_id": lead.id}
 
@@ -266,8 +311,10 @@ async def generate_ai_reply(ai_settings, business, history, current_message, med
             for msg in history:
                 role = "model" if msg.sender_type == "ai" else "user"
                 chat_history.append({"role": role, "parts": [msg.message_text]})
+
+            # Gemini's generate_content is synchronous — run in thread to avoid blocking event loop
             chat = gmodel.start_chat(history=chat_history)
-            response = chat.send_message(current_message)
+            response = await asyncio.to_thread(chat.send_message, current_message)
             reply = response.text.strip()
             logger.info(f"[Engine] AI reply generated ({len(reply)} chars)")
             return reply
@@ -323,8 +370,6 @@ Conversation:
             }
             model = model_defaults.get(provider, "gpt-4o-mini")
 
-        import json
-
         if provider in ("openai", "openrouter"):
             from openai import AsyncOpenAI
             base_url = "https://openrouter.ai/api/v1" if provider == "openrouter" else None
@@ -341,7 +386,8 @@ Conversation:
             import google.generativeai as genai
             genai.configure(api_key=ai_settings.api_key)
             gmodel = genai.GenerativeModel(model)
-            response = gmodel.generate_content(scoring_prompt)
+            # Run blocking Gemini call in thread to avoid blocking event loop
+            response = await asyncio.to_thread(gmodel.generate_content, scoring_prompt)
             text = response.text.strip()
 
         else:
@@ -357,4 +403,3 @@ Conversation:
 
     except Exception as e:
         logger.error(f"[Engine] Scoring error: {type(e).__name__}: {e}")
-

@@ -1,12 +1,15 @@
 """Leads router."""
 
-from fastapi import APIRouter, Depends
+import logging
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database import get_db
 from models import Lead
 from schemas import LeadResponse
 from typing import List
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/leads", tags=["Leads"])
 
@@ -24,6 +27,5 @@ async def get_lead(lead_id: int, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Lead).where(Lead.id == lead_id))
     lead = result.scalar_one_or_none()
     if not lead:
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="Lead not found")
     return lead

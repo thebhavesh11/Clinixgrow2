@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-const API = '';
+import { API, safeFetch } from '../lib/utils';
 
 export default function Automation() {
   const [health, setHealth] = useState({});
@@ -9,10 +9,18 @@ export default function Automation() {
   useEffect(() => {
     async function check() {
       const results = {};
-      try { const r = await fetch(`${API}/api/whatsapp/status`); const d = await r.json(); results.whatsapp = d.connected ? 'ok' : 'warning'; } catch { results.whatsapp = 'error'; }
-      try { const r = await fetch(`${API}/health`); results.api = r.ok ? 'ok' : 'error'; } catch { results.api = 'error'; }
-      try { const r = await fetch(`${API}/api/dashboard`); results.db = r.ok ? 'ok' : 'error'; } catch { results.db = 'error'; }
-      try { const r = await fetch(`${API}/api/ai-settings`); const d = await r.json(); results.ai = d.api_key ? 'ok' : 'warning'; } catch { results.ai = 'warning'; }
+      const [waData] = await safeFetch(`${API}/whatsapp/status`);
+      results.whatsapp = waData?.connected ? 'ok' : 'warning';
+
+      const [healthData] = await safeFetch(`/health`);
+      results.api = healthData ? 'ok' : 'error';
+
+      const [dashData] = await safeFetch(`${API}/dashboard`);
+      results.db = dashData ? 'ok' : 'error';
+
+      const [aiData] = await safeFetch(`${API}/ai-settings`);
+      results.ai = aiData?.api_key ? 'ok' : 'warning';
+
       setHealth(results);
       setLoading(false);
     }

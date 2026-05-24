@@ -18,11 +18,14 @@ class Business(Base):
     location = Column(String(255), default="")
     offers = Column(Text, default="")
     working_hours = Column(String(255), default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
     leads = relationship("Lead", back_populates="business")
     conversations = relationship("Conversation", back_populates="business")
     ai_setting = relationship("AISetting", back_populates="business", uselist=False)
+
+    def __repr__(self):
+        return f"<Business id={self.id} name={self.name!r}>"
 
 
 class Lead(Base):
@@ -34,10 +37,13 @@ class Lead(Base):
     business_id = Column(Integer, ForeignKey("businesses.id"), default=1)
     lead_score = Column(Integer, default=0)
     lead_status = Column(String(20), default="new")  # new, hot, warm, cold, spam
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
     business = relationship("Business", back_populates="leads")
     conversations = relationship("Conversation", back_populates="lead")
+
+    def __repr__(self):
+        return f"<Lead id={self.id} phone={self.phone_number!r} status={self.lead_status!r}>"
 
 
 class Conversation(Base):
@@ -46,11 +52,14 @@ class Conversation(Base):
     id = Column(Integer, primary_key=True, index=True)
     lead_id = Column(Integer, ForeignKey("leads.id"), nullable=False)
     business_id = Column(Integer, ForeignKey("businesses.id"), default=1)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
     lead = relationship("Lead", back_populates="conversations")
     business = relationship("Business", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation", order_by="Message.created_at")
+
+    def __repr__(self):
+        return f"<Conversation id={self.id} lead_id={self.lead_id}>"
 
 
 class Message(Base):
@@ -60,9 +69,12 @@ class Message(Base):
     conversation_id = Column(Integer, ForeignKey("conversations.id"), nullable=False)
     sender_type = Column(String(10), nullable=False)  # 'customer' or 'ai'
     message_text = Column(Text, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
     conversation = relationship("Conversation", back_populates="messages")
+
+    def __repr__(self):
+        return f"<Message id={self.id} sender={self.sender_type!r}>"
 
 
 class AISetting(Base):
@@ -83,9 +95,22 @@ class AISetting(Base):
     reply_to_contacts = Column(Integer, default=1)  # 1=reply to all, 0=only new/unsaved numbers
     auto_handover = Column(Integer, default=0)  # 0=off, 1=on
     handover_after = Column(Integer, default=10)  # number of AI replies before handover
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # WhatsApp connection mode: "qr" (whatsapp-web.js) or "cloud_api" (Meta Cloud API)
+    wa_connection_mode = Column(String(20), default="qr")
+    wa_app_id = Column(String(100), default="")              # Facebook App ID
+    wa_app_secret = Column(String(255), default="")          # Facebook App Secret
+    wa_phone_number_id = Column(String(100), default="")     # Meta Phone Number ID
+    wa_access_token = Column(String(500), default="")        # Permanent access token (System User)
+    wa_verify_token = Column(String(100), default="")        # Webhook verification token
+    wa_business_account_id = Column(String(100), default="") # WhatsApp Business Account ID
+
+    updated_at = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow())
 
     business = relationship("Business", back_populates="ai_setting")
+
+    def __repr__(self):
+        return f"<AISetting id={self.id} provider={self.provider!r} model={self.model!r}>"
 
 
 class BusinessMedia(Base):
@@ -98,7 +123,9 @@ class BusinessMedia(Base):
     file_type = Column(String(20), nullable=False)  # image, pdf, video
     file_path = Column(String(500), nullable=False)  # path on disk
     original_filename = Column(String(255), default="")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
 
     business = relationship("Business")
 
+    def __repr__(self):
+        return f"<BusinessMedia id={self.id} name={self.name!r} type={self.file_type!r}>"

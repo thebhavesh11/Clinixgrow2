@@ -5,7 +5,12 @@ from sqlalchemy.orm import DeclarativeBase
 
 DATABASE_URL = "sqlite+aiosqlite:///./smartflow.db"
 
-engine = create_async_engine(DATABASE_URL, echo=False)
+engine = create_async_engine(
+    DATABASE_URL,
+    echo=False,
+    pool_pre_ping=True,
+    connect_args={"timeout": 30},
+)
 
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
@@ -15,6 +20,7 @@ class Base(DeclarativeBase):
 
 
 async def get_db():
+    """Yield a transactional DB session — auto-commits on success, auto-rolls-back on error."""
     async with async_session() as session:
         async with session.begin():
             yield session

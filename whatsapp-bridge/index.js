@@ -23,6 +23,38 @@ let isConnected = false;
 let connectionInfo = null;
 let initError = null;
 
+// ── AI Settings Cache (avoids hitting backend on every message) ──────
+let _cachedSettings = null;
+let _cachedSettingsTime = 0;
+const SETTINGS_CACHE_TTL = 30000; // 30 seconds
+
+async function getCachedSettings() {
+    const now = Date.now();
+    if (_cachedSettings && (now - _cachedSettingsTime) < SETTINGS_CACHE_TTL) {
+        return _cachedSettings;
+    }
+    try {
+        const res = await axios.get(`${BACKEND_URL}/api/ai-settings`, { timeout: 5000 });
+        _cachedSettings = res.data;
+        _cachedSettingsTime = now;
+        return _cachedSettings;
+    } catch (err) {
+        console.error('[Bridge] Failed to fetch AI settings:', err.message);
+        return _cachedSettings; // return stale cache if available
+    }
+}
+
+// ── Global Error Handlers (prevent process crash) ────────────────────
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[Bridge] Unhandled Rejection:', reason);
+});
+
+process.on('uncaughtException', (err) => {
+    console.error('[Bridge] Uncaught Exception:', err.message);
+    // Don't exit — let the process recover
+});
+
+// ── WhatsApp Client ──────────────────────────────────────────────────
 function createClient() {
     return new Client({
         authStrategy: new LocalAuth({ dataPath: './.wwebjs_auth' }),
@@ -99,51 +131,46 @@ function initClient() {
     });
 
     client.on('message', async (msg) => {
-        if (msg.fromMe) return;
+        try {
+            if (msg.fromMe) return;
 
-        // Skip status updates, broadcasts, and newsletters — never interact with these
-        if (msg.from === 'status@broadcast' || msg.from.includes('@broadcast') || msg.from.includes('@newsletter')) return;
-        if (msg.isStatus) return;
+            // Skip status updates, broadcasts, and newsletters — never interact with these
+            if (msg.from === 'status@broadcast' || msg.from.includes('@broadcast') || msg.from.includes('@newsletter')) return;
+            if (msg.isStatus) return;
 
-        // Handle group messages — check backend setting
-        if (msg.from.includes('@g.us')) {
-            try {
-                const settingsRes = await axios.get(`${BACKEND_URL}/api/ai-settings`);
-                if (!settingsRes.data || !settingsRes.data.group_replies) return;
-            } catch {
-                return; // if we can't check, skip group messages
+            // Get cached settings (single fetch, not two)
+            const settings = await getCachedSettings();
+
+            // Handle group messages — check backend setting
+            if (msg.from.includes('@g.us')) {
+                if (!settings || !settings.group_replies) return;
             }
-        }
 
-        const phone = msg.from.replace('@c.us', '').replace('@g.us', '');
-        const contact = await msg.getContact();
-        const name = contact?.pushname || contact?.name || 'Unknown';
-        const isGroup = msg.from.includes('@g.us');
-        const isSavedContact = contact?.isMyContact || false;
+            const phone = msg.from.replace('@c.us', '').replace('@g.us', '');
+            const contact = await msg.getContact();
+            const name = contact?.pushname || contact?.name || 'Unknown';
+            const isGroup = msg.from.includes('@g.us');
+            const isSavedContact = contact?.isMyContact || false;
 
-        // Check if we should skip saved contacts
-        if (!isGroup && isSavedContact) {
-            try {
-                const settingsRes = await axios.get(`${BACKEND_URL}/api/ai-settings`);
-                if (settingsRes.data && !settingsRes.data.reply_to_contacts) {
+            // Check if we should skip saved contacts
+            if (!isGroup && isSavedContact) {
+                if (settings && !settings.reply_to_contacts) {
                     console.log(`[Bridge] Skipping saved contact: ${name} (${phone})`);
                     return;
                 }
-            } catch {}
-        }
+            }
 
-        console.log(`[Bridge] ${isGroup ? 'Group' : isSavedContact ? 'Contact' : 'New'} message from ${name} (${phone}): ${msg.body.substring(0, 50)}...`);
+            console.log(`[Bridge] ${isGroup ? 'Group' : isSavedContact ? 'Contact' : 'New'} message from ${name} (${phone}): ${(msg.body || '').substring(0, 50)}...`);
 
-        try {
             await axios.post(`${BACKEND_URL}/api/whatsapp/webhook`, {
                 phone: isGroup ? msg.from : phone,
-                message: msg.body,
+                message: msg.body || '',
                 name: name,
                 business_id: 1,
                 is_group: isGroup,
-            });
+            }, { timeout: 30000 });
         } catch (err) {
-            console.error('[Bridge] Webhook error:', err.message);
+            console.error('[Bridge] Message handler error:', err.message);
         }
     });
 
@@ -154,7 +181,12 @@ function initClient() {
     });
 }
 
-// API Routes
+// ── API Routes ───────────────────────────────────────────────────────
+
+app.get('/health', (req, res) => {
+    res.json({ status: 'healthy', connected: isConnected, uptime: process.uptime() });
+});
+
 app.get('/status', (req, res) => {
     res.json({
         connected: isConnected,
@@ -169,14 +201,16 @@ app.get('/qr', (req, res) => {
 });
 
 app.post('/send', async (req, res) => {
-    const { phone, message } = req.body;
-    if (!client || !isConnected) return res.json({ success: false, error: 'Not connected' });
+    const { phone, message } = req.body || {};
+    if (!phone || !message) return res.status(400).json({ success: false, error: 'Missing phone or message' });
+    if (!client || !isConnected) return res.status(503).json({ success: false, error: 'Not connected' });
     try {
         const chatId = phone.includes('@') ? phone : `${phone}@c.us`;
         await client.sendMessage(chatId, message);
         res.json({ success: true });
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        console.error('[Bridge] Send error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
@@ -189,27 +223,37 @@ app.post('/logout', async (req, res) => {
         res.json({ success: true });
         setTimeout(() => initClient(), 2000);
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        console.error('[Bridge] Logout error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
 app.post('/restart', async (req, res) => {
     try {
-        if (client) { try { await client.destroy(); } catch {} }
+        if (client) {
+            try { await client.destroy(); } catch (e) {
+                console.warn('[Bridge] Client destroy warning:', e.message);
+            }
+        }
+        isConnected = false;
+        connectionInfo = null;
+        latestQR = null;
         res.json({ success: true, message: 'Restarting...' });
         setTimeout(() => initClient(), 2000);
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        console.error('[Bridge] Restart error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
 app.post('/send-media', async (req, res) => {
-    const { phone, mediaUrl, filename, caption } = req.body;
-    if (!client || !isConnected) return res.json({ success: false, error: 'Not connected' });
+    const { phone, mediaUrl, filename, caption } = req.body || {};
+    if (!phone || !mediaUrl) return res.status(400).json({ success: false, error: 'Missing phone or mediaUrl' });
+    if (!client || !isConnected) return res.status(503).json({ success: false, error: 'Not connected' });
     try {
         const { MessageMedia } = require('whatsapp-web.js');
         // Download the file from backend
-        const response = await axios.get(mediaUrl, { responseType: 'arraybuffer' });
+        const response = await axios.get(mediaUrl, { responseType: 'arraybuffer', timeout: 30000 });
         const base64 = Buffer.from(response.data).toString('base64');
 
         // Detect MIME type from filename
@@ -228,24 +272,43 @@ app.post('/send-media', async (req, res) => {
         res.json({ success: true });
     } catch (err) {
         console.error('[Bridge] Send media error:', err.message);
-        res.json({ success: false, error: err.message });
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
 app.post('/typing', async (req, res) => {
-    const { phone } = req.body;
-    if (!client || !isConnected) return res.json({ success: false, error: 'Not connected' });
+    const { phone } = req.body || {};
+    if (!phone) return res.status(400).json({ success: false, error: 'Missing phone' });
+    if (!client || !isConnected) return res.status(503).json({ success: false, error: 'Not connected' });
     try {
         const chatId = phone.includes('@') ? phone : `${phone}@c.us`;
         const chat = await client.getChatById(chatId);
         await chat.sendStateTyping();
         res.json({ success: true });
     } catch (err) {
-        res.json({ success: false, error: err.message });
+        console.error('[Bridge] Typing error:', err.message);
+        res.status(500).json({ success: false, error: err.message });
     }
 });
 
-// Start server
+// ── Graceful Shutdown ────────────────────────────────────────────────
+async function shutdown(signal) {
+    console.log(`[Bridge] Received ${signal}, shutting down gracefully...`);
+    try {
+        if (client) {
+            await client.destroy();
+            console.log('[Bridge] WhatsApp client destroyed');
+        }
+    } catch (e) {
+        console.error('[Bridge] Error during shutdown:', e.message);
+    }
+    process.exit(0);
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// ── Start Server ─────────────────────────────────────────────────────
 app.listen(PORT, () => {
     console.log(`[Bridge] Running on port ${PORT}`);
     initClient();

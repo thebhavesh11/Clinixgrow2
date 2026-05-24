@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-const API = '/api';
+import { API, safeFetch, timeAgo, scoreColor } from './lib/utils';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
@@ -11,13 +11,11 @@ export default function Dashboard() {
   useEffect(() => {
     async function load() {
       try {
-        const [d, l, w] = await Promise.all([
-          fetch(`${API}/dashboard`).then(r => r.json()),
-          fetch(`${API}/leads`).then(r => r.json()),
-          fetch(`${API}/whatsapp/status`).then(r => r.json()).catch(() => ({ connected: false })),
-        ]);
-        setStats(d); setLeads(l.slice(0, 5));
-        setHealth({ whatsapp: w?.connected ? 'ok' : 'error', api: 'ok', db: 'ok' });
+        const [d] = await safeFetch(`${API}/dashboard`);
+        const [l] = await safeFetch(`${API}/leads`);
+        const [w] = await safeFetch(`${API}/whatsapp/status`);
+        setStats(d); setLeads(Array.isArray(l) ? l.slice(0, 5) : []);
+        setHealth({ whatsapp: w?.connected ? 'ok' : 'error', api: d ? 'ok' : 'error', db: d ? 'ok' : 'error' });
       } catch { setHealth({ whatsapp: 'error', api: 'error', db: 'error' }); }
       finally { setLoading(false); }
     }
@@ -26,8 +24,6 @@ export default function Dashboard() {
 
   if (loading) return <div className="loading"><div className="spinner"></div>Loading dashboard...</div>;
   const d = stats || {};
-  const timeAgo = dt => { if (!dt) return ''; const m = Math.floor((Date.now() - new Date(dt).getTime()) / 60000); if (m < 1) return 'Just now'; if (m < 60) return `${m}m ago`; const h = Math.floor(m / 60); if (h < 24) return `${h}h ago`; return `${Math.floor(h / 24)}d ago`; };
-  const scoreColor = s => s >= 80 ? 'var(--hot)' : s >= 50 ? 'var(--warm)' : 'var(--cold)';
 
   return (<>
     <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Command Center</h2>
@@ -48,7 +44,7 @@ export default function Dashboard() {
           <table className="data-table"><thead><tr><th>Contact</th><th>Score</th><th>Label</th><th>Last Active</th></tr></thead><tbody>
             {leads.map(l => (<tr key={l.id}><td><div style={{ fontWeight: 600 }}>{l.name}</div><div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{l.phone_number}</div></td>
             <td><div className="score-display"><span className="score-number" style={{ color: scoreColor(l.lead_score) }}>{l.lead_score}</span><div className="score-bar"><div className="score-bar-fill" style={{ width: `${l.lead_score}%`, background: scoreColor(l.lead_score) }}></div></div></div></td>
-            <td><span className={`lead-badge ${l.lead_status}`}><span className="badge-dot"></span>{l.lead_status.toUpperCase()}</span></td>
+            <td><span className={`lead-badge ${l.lead_status}`}><span className="badge-dot"></span>{(l.lead_status || 'new').toUpperCase()}</span></td>
             <td style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>{timeAgo(l.created_at)}</td></tr>))}
           </tbody></table>
         ) : <div className="empty-state"><div className="empty-icon">📭</div><p>No leads yet. They appear when customers message your WhatsApp.</p></div>}
