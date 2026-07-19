@@ -21,9 +21,9 @@ router = APIRouter(prefix="/api/whatsapp", tags=["WhatsApp"])
 
 
 # ── Helper: Get current connection mode from DB ──────────────────────
-async def _get_wa_settings(db: AsyncSession):
+async def _get_wa_settings(db: AsyncSession, business_id: int = 1):
     """Get the current WhatsApp connection settings."""
-    result = await db.execute(select(AISetting).where(AISetting.business_id == 1))
+    result = await db.execute(select(AISetting).where(AISetting.business_id == business_id))
     return result.scalar_one_or_none()
 
 
@@ -262,6 +262,19 @@ async def cloud_webhook_receive(request: Request, db: AsyncSession = Depends(get
                 name = c.get("profile", {}).get("name", "Unknown")
                 contact_map[wa_id] = name
 
+            # Resolve business_id from the phone_number_id in metadata
+            metadata = value.get("metadata", {})
+            recv_phone_id = metadata.get("phone_number_id", "")
+            resolved_bid = 1  # default fallback
+            if recv_phone_id:
+                from models import AISetting
+                bid_result = await db.execute(
+                    select(AISetting).where(AISetting.wa_phone_number_id == recv_phone_id)
+                )
+                matched_settings = bid_result.scalar_one_or_none()
+                if matched_settings:
+                    resolved_bid = matched_settings.business_id
+
             for msg in messages:
                 msg_type = msg.get("type", "")
                 phone = msg.get("from", "")
@@ -296,7 +309,7 @@ async def cloud_webhook_receive(request: Request, db: AsyncSession = Depends(get
                         phone=phone,
                         message=text,
                         name=name,
-                        business_id=1,
+                        business_id=resolved_bid,
                         db=db,
                     )
                     logger.info(f"[CloudAPI] ✅ Processed message from {phone} — reply={bool(result.get('reply'))}")

@@ -129,3 +129,116 @@ class BusinessMedia(Base):
 
     def __repr__(self):
         return f"<BusinessMedia id={self.id} name={self.name!r} type={self.file_type!r}>"
+
+
+class WorkingHours(Base):
+    __tablename__ = "working_hours"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), default=1)
+    day_of_week = Column(Integer, nullable=False)  # 0=Monday, 1=Tuesday ... 6=Sunday
+    is_open = Column(Integer, default=1)  # 0=closed, 1=open
+    start_time = Column(String(5), default="09:00")  # HH:MM
+    end_time = Column(String(5), default="18:00")
+    break_start = Column(String(5), default="")  # optional lunch break
+    break_end = Column(String(5), default="")
+    slot_duration = Column(Integer, default=30)  # minutes per slot
+
+    business = relationship("Business")
+
+    def __repr__(self):
+        days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        day = days[self.day_of_week] if 0 <= self.day_of_week <= 6 else "?"
+        return f"<WorkingHours {day} {'OPEN' if self.is_open else 'CLOSED'} {self.start_time}-{self.end_time}>"
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), default=1)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)  # null = manual/walk-in
+    title = Column(String(255), default="Appointment")
+    date = Column(String(10), nullable=False)  # "YYYY-MM-DD"
+    start_time = Column(String(5), nullable=False)  # "HH:MM"
+    end_time = Column(String(5), nullable=False)  # "HH:MM"
+    status = Column(String(20), default="confirmed")  # confirmed, cancelled, completed, no_show
+    notes = Column(Text, default="")
+    booked_by = Column(String(20), default="manual")  # "manual", "ai", "lead"
+    reminder_sent = Column(Integer, default=0)  # 0=not sent, 1=sent
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
+
+    business = relationship("Business")
+    lead = relationship("Lead")
+
+    def __repr__(self):
+        return f"<Appointment id={self.id} date={self.date} {self.start_time}-{self.end_time} status={self.status!r}>"
+
+
+class VoiceSettings(Base):
+    __tablename__ = "voice_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), unique=True, default=1)
+
+    # Vapi connection
+    vapi_api_key = Column(String(500), default="")
+    vapi_assistant_id = Column(String(100), default="")
+    vapi_phone_id = Column(String(100), default="")
+    phone_number = Column(String(20), default="")
+
+    # Assistant config
+    agent_name = Column(String(255), default="AI Assistant")
+    voice_provider = Column(String(50), default="11labs")  # 11labs, playht, deepgram
+    voice_id = Column(String(100), default="")
+    language = Column(String(10), default="hi-IN")
+    first_message = Column(Text, default="Hello! How can I help you today?")
+    system_prompt = Column(Text, default="")
+
+    # Feature toggles
+    can_book_appointments = Column(Integer, default=1)
+    can_transfer_call = Column(Integer, default=1)
+
+    # Webhook
+    webhook_secret = Column(String(100), default="")
+
+    is_active = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=lambda: datetime.utcnow(), onupdate=lambda: datetime.utcnow())
+
+    business = relationship("Business")
+
+    def __repr__(self):
+        return f"<VoiceSettings business={self.business_id} active={self.is_active} assistant={self.vapi_assistant_id!r}>"
+
+
+class CallLog(Base):
+    __tablename__ = "call_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    business_id = Column(Integer, ForeignKey("businesses.id"), default=1)
+    lead_id = Column(Integer, ForeignKey("leads.id"), nullable=True)
+
+    # Vapi call data
+    vapi_call_id = Column(String(100), default="")
+    phone_number = Column(String(20), default="")
+    direction = Column(String(10), default="inbound")  # inbound, outbound
+    status = Column(String(20), default="queued")  # queued, in-progress, ended, failed
+
+    # Call details
+    duration_seconds = Column(Integer, default=0)
+    cost = Column(Float, default=0.0)
+    recording_url = Column(String(500), default="")
+    transcript = Column(Text, default="")
+    summary = Column(Text, default="")
+    ended_reason = Column(String(50), default="")
+
+    # Actions taken
+    appointments_booked = Column(Integer, default=0)
+
+    created_at = Column(DateTime, default=lambda: datetime.utcnow())
+
+    business = relationship("Business")
+    lead = relationship("Lead")
+
+    def __repr__(self):
+        return f"<CallLog id={self.id} phone={self.phone_number} status={self.status!r} duration={self.duration_seconds}s>"

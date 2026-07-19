@@ -1,26 +1,28 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { API, safeFetch, timeAgo, scoreColor } from './lib/utils';
+import { useClient } from './lib/ClientContext';
 
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [leads, setLeads] = useState([]);
   const [health, setHealth] = useState({ whatsapp: null, api: null, db: null });
   const [loading, setLoading] = useState(true);
+  const { bUrl, selectedClientId } = useClient();
 
   useEffect(() => {
     async function load() {
       try {
-        const [d] = await safeFetch(`${API}/dashboard`);
-        const [l] = await safeFetch(`${API}/leads`);
+        const [d] = await safeFetch(bUrl('/dashboard'));
+        const [l] = await safeFetch(bUrl('/leads'));
         const [w] = await safeFetch(`${API}/whatsapp/status`);
         setStats(d); setLeads(Array.isArray(l) ? l.slice(0, 5) : []);
         setHealth({ whatsapp: w?.connected ? 'ok' : 'error', api: d ? 'ok' : 'error', db: d ? 'ok' : 'error' });
       } catch { setHealth({ whatsapp: 'error', api: 'error', db: 'error' }); }
       finally { setLoading(false); }
     }
-    load(); const iv = setInterval(load, 20000); return () => clearInterval(iv);
-  }, []);
+    if (selectedClientId) { load(); const iv = setInterval(load, 20000); return () => clearInterval(iv); }
+  }, [selectedClientId]);
 
   if (loading) return <div className="loading"><div className="spinner"></div>Loading dashboard...</div>;
   const d = stats || {};
@@ -28,11 +30,13 @@ export default function Dashboard() {
   return (<>
     <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>Command Center</h2>
     <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginBottom: 24 }}>Real-time overview of all automation activity</p>
-    <div className="stat-grid">
+    <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(6, 1fr)' }}>
       <div className="stat-card blue"><div className="stat-label">Total Messages Today</div><div className="stat-value">{d.total_messages_today||0}</div><div className="stat-sub">+{d.total_leads_today||0} from today</div></div>
       <div className="stat-card red"><div className="stat-label">Hot Leads</div><div className="stat-value">{d.hot_leads||0}</div><div className="stat-sub">🔥 Ready to convert</div></div>
       <div className="stat-card orange"><div className="stat-label">Warm Leads</div><div className="stat-value">{d.warm_leads||0}</div><div className="stat-sub">✏ Follow up needed</div></div>
       <div className="stat-card cyan"><div className="stat-label">Cold Leads</div><div className="stat-value">{d.cold_leads||0}</div><div className="stat-sub">❄ Long-term nurture</div></div>
+      <div className="stat-card green"><div className="stat-label">Appointments Today</div><div className="stat-value">{d.appointments_today||0}</div><div className="stat-sub">📅 {d.upcoming_appointments||0} upcoming this week</div></div>
+      <div className="stat-card purple"><div className="stat-label">Calls Today</div><div className="stat-value">{d.calls_today||0}</div><div className="stat-sub">🎙️ {d.total_call_minutes||0} min total</div></div>
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 380px', gap: 20 }}>
       <div className="card">

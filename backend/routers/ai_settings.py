@@ -26,9 +26,9 @@ class ValidateKeyResponse(BaseModel):
 
 
 @router.get("", response_model=AISettingResponse)
-async def get_ai_settings(db: AsyncSession = Depends(get_db)):
-    """Get AI settings for the primary business."""
-    result = await db.execute(select(AISetting).where(AISetting.business_id == 1))
+async def get_ai_settings(business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Get AI settings for a business."""
+    result = await db.execute(select(AISetting).where(AISetting.business_id == business_id))
     settings = result.scalar_one_or_none()
     if not settings:
         raise HTTPException(status_code=404, detail="AI settings not found")
@@ -46,9 +46,9 @@ async def create_ai_settings(data: AISettingCreate, db: AsyncSession = Depends(g
 
 
 @router.put("", response_model=AISettingResponse)
-async def update_ai_settings(data: AISettingUpdate, db: AsyncSession = Depends(get_db)):
-    """Update AI settings for the primary business."""
-    result = await db.execute(select(AISetting).where(AISetting.business_id == 1))
+async def update_ai_settings(data: AISettingUpdate, business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Update AI settings for a business."""
+    result = await db.execute(select(AISetting).where(AISetting.business_id == business_id))
     settings = result.scalar_one_or_none()
     if not settings:
         raise HTTPException(status_code=404, detail="AI settings not found")

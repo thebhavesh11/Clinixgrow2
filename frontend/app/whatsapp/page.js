@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { API, safeFetch } from '../lib/utils';
+import { useClient } from '../lib/ClientContext';
 
 export default function WhatsApp() {
   const [status, setStatus] = useState({ connected: false, hasQR: false, info: null, error: null, mode: 'qr' });
@@ -15,12 +16,13 @@ export default function WhatsApp() {
   const [webhookStatus, setWebhookStatus] = useState(null);
   const [subscribing, setSubscribing] = useState(false);
   const [customWebhookUrl, setCustomWebhookUrl] = useState('');
+  const { bUrl, selectedClientId } = useClient();
 
   const showToast = (msg, type) => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
   const fetchQR = async () => { const [d] = await safeFetch(`${API}/whatsapp/qr`); if (d?.qr) setQrImage(d.qr); };
   const checkStatus = async () => { const [d] = await safeFetch(`${API}/whatsapp/status`); if (d) setStatus(d); else setStatus(s => ({ ...s, connected: false, error: 'Backend unreachable' })); if (d?.hasQR) fetchQR(); setLoading(false); };
   const fetchAI = async () => {
-    const [d] = await safeFetch(`${API}/ai-settings`);
+    const [d] = await safeFetch(bUrl('/ai-settings'));
     if (d) {
       setAiSettings(d);
       setCloudForm({
@@ -31,14 +33,14 @@ export default function WhatsApp() {
     }
   };
 
-  useEffect(() => { checkStatus(); fetchAI(); const iv = setInterval(checkStatus, 8000); return () => clearInterval(iv); }, []);
+  useEffect(() => { checkStatus(); fetchAI(); const iv = setInterval(checkStatus, 8000); return () => clearInterval(iv); }, [selectedClientId]);
 
   const currentMode = aiSettings?.wa_connection_mode || 'qr';
 
   const updateAISetting = async (updates) => {
     if (!aiSettings) return;
     const newSettings = { ...aiSettings, ...updates };
-    const [data, err] = await safeFetch(`${API}/ai-settings`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newSettings) });
+    const [data, err] = await safeFetch(bUrl('/ai-settings'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(newSettings) });
     if (data && !err) { setAiSettings(newSettings); return true; }
     showToast('Failed to update', 'error'); return false;
   };

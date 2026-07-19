@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("smartflow")
 
 from database import engine, Base
-from routers import business, ai_settings, leads, conversations, dashboard, whatsapp, media
+from routers import business, ai_settings, leads, conversations, dashboard, whatsapp, media, appointments, voice, clients
 
 
 @asynccontextmanager
@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     """Create tables on startup and seed defaults."""
     from database import async_session
     from sqlalchemy import select
-    from models import Business, AISetting
+    from models import Business, AISetting, WorkingHours, VoiceSettings
 
     try:
         async with engine.begin() as conn:
@@ -46,11 +46,41 @@ async def lifespan(app: FastAPI):
                 if not result.scalar_one_or_none():
                     session.add(AISetting(business_id=1))
                     logger.info("Seeded default AI settings")
+
+                # Seed default working hours if not exist
+                result = await session.execute(select(WorkingHours).where(WorkingHours.business_id == 1))
+                if not result.scalars().first():
+                    for day in range(7):
+                        session.add(WorkingHours(
+                            business_id=1,
+                            day_of_week=day,
+                            is_open=1 if day < 5 else 0,  # Mon-Fri open, Sat-Sun closed
+                            start_time="09:00",
+                            end_time="18:00",
+                            break_start="13:00",
+                            break_end="14:00",
+                            slot_duration=30,
+                        ))
+                    logger.info("Seeded default working hours (Mon-Fri 09:00-18:00)")
+
+                # Seed default VoiceSettings if not exist
+                result = await session.execute(select(VoiceSettings).where(VoiceSettings.business_id == 1))
+                if not result.scalar_one_or_none():
+                    import secrets
+                    session.add(VoiceSettings(business_id=1, webhook_secret=secrets.token_hex(16)))
+                    logger.info("Seeded default voice settings")
     except Exception as e:
         logger.error(f"Startup error: {type(e).__name__}: {e}")
         raise
 
+    # Start background reminder task
+    import asyncio
+    from automation.reminders import reminder_loop
+    reminder_task = asyncio.create_task(reminder_loop())
+
     yield
+
+    reminder_task.cancel()
     await engine.dispose()
     logger.info("Database connections closed")
 
@@ -91,6 +121,9 @@ app.include_router(conversations.router)
 app.include_router(dashboard.router)
 app.include_router(whatsapp.router)
 app.include_router(media.router)
+app.include_router(appointments.router)
+app.include_router(voice.router)
+app.include_router(clients.router)
 
 
 @app.get("/")

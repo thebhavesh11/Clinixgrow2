@@ -1,13 +1,15 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { API, safeFetch, timeAgo, scoreColor } from '../lib/utils';
+import { useClient } from '../lib/ClientContext';
 
 export default function Leads() {
   const [leads, setLeads] = useState([]);
   const [filter, setFilter] = useState('all');
   const [loading, setLoading] = useState(true);
+  const { bUrl, selectedClientId } = useClient();
 
-  useEffect(() => { safeFetch(`${API}/leads`).then(([d]) => { if (Array.isArray(d)) setLeads(d); }).finally(() => setLoading(false)); }, []);
+  useEffect(() => { if (selectedClientId) { setLoading(true); safeFetch(bUrl('/leads')).then(([d]) => { if (Array.isArray(d)) setLeads(d); }).finally(() => setLoading(false)); } }, [selectedClientId]);
   const filtered = filter === 'all' ? leads : leads.filter(l => l.lead_status === filter);
 
   if (loading) return <div className="loading"><div className="spinner"></div>Loading leads...</div>;

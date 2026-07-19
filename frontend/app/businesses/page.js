@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { API, safeFetch } from '../lib/utils';
+import { useClient } from '../lib/ClientContext';
 const PROVIDER_MODELS = { openai: ['gpt-4o','gpt-4o-mini','gpt-4-turbo','gpt-4','gpt-3.5-turbo','o1-mini','o3-mini'], gemini: ['gemini-2.0-flash','gemini-1.5-pro','gemini-1.5-flash','gemini-1.0-pro'], openrouter: [] };
 
 export default function Businesses() {
@@ -15,23 +16,24 @@ export default function Businesses() {
   const [media, setMedia] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [editingMedia, setEditingMedia] = useState(null);
+  const { bUrl, selectedClientId } = useClient();
 
   useEffect(() => {
     async function load() {
-      const [b] = await safeFetch(`${API}/business`);
-      const [a] = await safeFetch(`${API}/ai-settings`);
-      const [m] = await safeFetch(`${API}/media`);
+      const [b] = await safeFetch(bUrl('/business'));
+      const [a] = await safeFetch(bUrl('/ai-settings'));
+      const [m] = await safeFetch(bUrl('/media'));
       if (b) setBiz(b);
       if (a) setAi(a);
       if (Array.isArray(m)) setMedia(m);
       setLoading(false);
     }
-    load();
-  }, []);
+    if (selectedClientId) load();
+  }, [selectedClientId]);
 
   const showToast = (msg, type) => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
-  const saveBusiness = async () => { setSaving(true); try { const [, err] = await safeFetch(`${API}/business`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(biz) }); showToast(!err?'Business info saved!':'Failed to save', !err?'success':'error'); } finally { setSaving(false); } };
-  const saveAI = async () => { setSaving(true); try { const [, err] = await safeFetch(`${API}/ai-settings`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ai) }); showToast(!err?'AI settings saved!':'Failed to save', !err?'success':'error'); } finally { setSaving(false); } };
+  const saveBusiness = async () => { setSaving(true); try { const [, err] = await safeFetch(bUrl('/business'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(biz) }); showToast(!err?'Business info saved!':'Failed to save', !err?'success':'error'); } finally { setSaving(false); } };
+  const saveAI = async () => { setSaving(true); try { const [, err] = await safeFetch(bUrl('/ai-settings'), { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(ai) }); showToast(!err?'AI settings saved!':'Failed to save', !err?'success':'error'); } finally { setSaving(false); } };
   const testConnection = async () => { setValidating(true); setValidationStatus(null); try { const [d] = await safeFetch(`${API}/ai-settings/validate`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ provider:ai?.provider, api_key:ai?.api_key, model:ai?.model }) }); if (d) { setValidationStatus(d); showToast(d.valid?'✅ Connected!':'❌ '+d.message, d.valid?'success':'error'); } else { setValidationStatus({valid:false,message:'Connection failed'}); } } finally { setValidating(false); } };
 
   async function uploadFile(file) {
@@ -41,7 +43,7 @@ export default function Businesses() {
       fd.append('file', file);
       fd.append('name', file.name.replace(/\.[^.]+$/, ''));
       fd.append('description', '');
-      fd.append('business_id', '1');
+      fd.append('business_id', String(selectedClientId || 1));
       const [m, err] = await safeFetch(`${API}/media/upload`, { method: 'POST', body: fd });
       if (m && !err) { setMedia(prev => [m, ...prev]); showToast('File uploaded!', 'success'); }
       else showToast('Upload failed', 'error');

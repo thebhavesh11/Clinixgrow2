@@ -15,7 +15,7 @@ timeout /t 2 >nul
 
 :: Start Backend (FastAPI)
 echo [2/4] Starting Backend (port 8000)...
-start "FlowBot-Backend" cmd /c "cd /d "%~dp0backend" && python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+start "FlowBot-Backend" cmd /c "cd /d "%~dp0backend" && py -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
 timeout /t 3 >nul
 
 :: Start WhatsApp Bridge

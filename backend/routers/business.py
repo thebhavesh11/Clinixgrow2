@@ -14,9 +14,9 @@ router = APIRouter(prefix="/api/business", tags=["Business"])
 
 
 @router.get("", response_model=BusinessResponse)
-async def get_business(db: AsyncSession = Depends(get_db)):
-    """Get the primary business profile."""
-    result = await db.execute(select(Business).where(Business.id == 1))
+async def get_business(business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Get a business profile by ID."""
+    result = await db.execute(select(Business).where(Business.id == business_id))
     business = result.scalar_one_or_none()
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")
@@ -35,9 +35,9 @@ async def create_business(data: BusinessCreate, db: AsyncSession = Depends(get_d
 
 
 @router.put("", response_model=BusinessResponse)
-async def update_business(data: BusinessUpdate, db: AsyncSession = Depends(get_db)):
-    """Update the primary business profile."""
-    result = await db.execute(select(Business).where(Business.id == 1))
+async def update_business(data: BusinessUpdate, business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """Update a business profile."""
+    result = await db.execute(select(Business).where(Business.id == business_id))
     business = result.scalar_one_or_none()
     if not business:
         raise HTTPException(status_code=404, detail="Business not found")

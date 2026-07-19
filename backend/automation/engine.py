@@ -9,7 +9,7 @@ import httpx
 from collections import OrderedDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
-from models import Lead, Conversation, Message, AISetting, Business, BusinessMedia
+from models import Lead, Conversation, Message, AISetting, Business, BusinessMedia, Appointment, WorkingHours
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +118,9 @@ async def _process_message_inner(
     history = list(reversed(result.scalars().all()))
 
     # 6. Generate AI reply
-    ai_reply = await generate_ai_reply(ai_settings, business, history, message, media_files)
+    # 6a. Build appointment context for AI
+    appt_context = await _build_appointment_context(db, business_id, lead.id)
+    ai_reply = await generate_ai_reply(ai_settings, business, history, message, media_files, appt_context)
 
     # 7. Parse [MEDIA:ID] tags and send media files
     media_tags = re.findall(r'\[MEDIA:(\d+)\]', ai_reply)
@@ -167,6 +169,62 @@ async def _process_message_inner(
     )
     db.add(ai_msg)
     await db.flush()
+
+    # 8a. Parse [APPT:DATE|TIME] tags and auto-book appointments
+    appt_tags = re.findall(r'\[APPT:(\d{4}-\d{2}-\d{2})\|(\d{2}:\d{2})\]', ai_reply)
+    clean_reply = re.sub(r'\s*\[APPT:\d{4}-\d{2}-\d{2}\|\d{2}:\d{2}\]\s*', ' ', clean_reply).strip()
+    # Update the saved message with clean text (remove APPT tags too)
+    ai_msg.message_text = clean_reply
+    await db.flush()
+
+    for appt_date, appt_time in appt_tags:
+        try:
+            # Get slot duration from working hours
+            from datetime import timedelta as td
+            target_dt = datetime.strptime(appt_date, "%Y-%m-%d")
+            wh_result = await db.execute(
+                select(WorkingHours).where(
+                    WorkingHours.business_id == business_id,
+                    WorkingHours.day_of_week == target_dt.weekday(),
+                )
+            )
+            wh = wh_result.scalar_one_or_none()
+            duration = wh.slot_duration if wh else 30
+            st = datetime.strptime(appt_time, "%H:%M")
+            end_time = (st + td(minutes=duration)).strftime("%H:%M")
+
+            # Check if slot is actually available (no conflict)
+            conflict_result = await db.execute(
+                select(Appointment).where(
+                    Appointment.business_id == business_id,
+                    Appointment.date == appt_date,
+                    Appointment.status == "confirmed",
+                )
+            )
+            conflicts = conflict_result.scalars().all()
+            has_conflict = any(
+                not (end_time <= c.start_time or appt_time >= c.end_time)
+                for c in conflicts
+            )
+
+            if not has_conflict:
+                new_appt = Appointment(
+                    business_id=business_id,
+                    lead_id=lead.id,
+                    title="Appointment",
+                    date=appt_date,
+                    start_time=appt_time,
+                    end_time=end_time,
+                    status="confirmed",
+                    booked_by="ai",
+                )
+                db.add(new_appt)
+                await db.flush()
+                logger.info(f"[Engine] ✅ AI booked appointment for {phone}: {appt_date} {appt_time}-{end_time}")
+            else:
+                logger.warning(f"[Engine] ⚠ AI tried to book conflicting slot: {appt_date} {appt_time}")
+        except Exception as e:
+            logger.error(f"[Engine] Appointment booking error: {type(e).__name__}: {e}")
 
     # 8b. Check auto-handover: count AI messages and mark lead if limit reached
     auto_handover = getattr(ai_settings, 'auto_handover', 0) or 0
@@ -231,7 +289,98 @@ async def _process_message_inner(
     return {"reply": clean_reply, "lead_id": lead.id}
 
 
-async def generate_ai_reply(ai_settings, business, history, current_message, media_files=None) -> str:
+async def _build_appointment_context(db: AsyncSession, business_id: int, lead_id: int) -> str:
+    """Build appointment context string for AI system prompt."""
+    from datetime import timedelta as td
+    from routers.appointments import _generate_slots
+
+    lines = []
+    today = datetime.utcnow()
+    today_str = today.strftime("%Y-%m-%d")
+    day_names = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+
+    lines.append(f"Today is {today.strftime('%Y-%m-%d')} ({day_names[today.weekday()]}).")
+    lines.append("You can book appointments for the customer. To book, include [APPT:YYYY-MM-DD|HH:MM] in your reply.")
+    lines.append("Only book slots that are listed as available below. Never book a slot that is not listed.")
+    lines.append("")
+
+    # Get working hours
+    result = await db.execute(
+        select(WorkingHours)
+        .where(WorkingHours.business_id == business_id)
+        .order_by(WorkingHours.day_of_week)
+    )
+    wh_all = {wh.day_of_week: wh for wh in result.scalars().all()}
+
+    # Get appointments for next 7 days
+    date_range = [(today + td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.business_id == business_id,
+            Appointment.date.in_(date_range),
+            Appointment.status == "confirmed",
+        )
+    )
+    all_appts = result.scalars().all()
+    appts_by_date = {}
+    for a in all_appts:
+        appts_by_date.setdefault(a.date, []).append(a)
+
+    lines.append("Available slots (next 7 days):")
+    for i in range(7):
+        dt = today + td(days=i)
+        date_str = dt.strftime("%Y-%m-%d")
+        day_name = day_names[dt.weekday()]
+        wh = wh_all.get(dt.weekday())
+
+        if not wh or not wh.is_open:
+            lines.append(f"- {date_str} ({day_name}): CLOSED")
+            continue
+
+        all_slots = _generate_slots(
+            wh.start_time, wh.end_time, wh.slot_duration,
+            wh.break_start or "", wh.break_end or "",
+        )
+
+        booked = appts_by_date.get(date_str, [])
+        booked_times = {(a.start_time, a.end_time) for a in booked}
+
+        available = []
+        for slot in all_slots:
+            is_booked = any(
+                not (slot["end_time"] <= b_start or slot["time"] >= b_end)
+                for b_start, b_end in booked_times
+            )
+            if not is_booked:
+                available.append(slot["time"])
+
+        if available:
+            # Show max 10 slots to keep prompt short
+            display = available[:10]
+            extra = f" ... +{len(available)-10} more" if len(available) > 10 else ""
+            lines.append(f"- {date_str} ({day_name}): {', '.join(display)}{extra}")
+        else:
+            lines.append(f"- {date_str} ({day_name}): FULLY BOOKED")
+
+    # Add lead's existing appointments
+    result = await db.execute(
+        select(Appointment).where(
+            Appointment.lead_id == lead_id,
+            Appointment.status == "confirmed",
+            Appointment.date >= today_str,
+        ).order_by(Appointment.date, Appointment.start_time)
+    )
+    lead_appts = result.scalars().all()
+    if lead_appts:
+        lines.append("")
+        lines.append("This customer's existing appointments:")
+        for a in lead_appts:
+            lines.append(f"- {a.date} {a.start_time}-{a.end_time} ({a.status})")
+
+    return "\n".join(lines)
+
+
+async def generate_ai_reply(ai_settings, business, history, current_message, media_files=None, appt_context="") -> str:
     """Generate an AI reply using the configured provider."""
     if not ai_settings or not ai_settings.api_key:
         logger.warning("[Engine] No AI settings or API key configured — using fallback")
@@ -263,6 +412,10 @@ async def generate_ai_reply(ai_settings, business, history, current_message, med
         system_prompt += "\n\n--- Available Media Files ---\n"
         system_prompt += "You can send media files to the customer by including the tag exactly as shown (e.g. [MEDIA:1]) in your reply. Only include a media tag when it is relevant to the conversation.\n"
         system_prompt += "\n".join(media_lines)
+
+    # Append appointment booking context
+    if appt_context:
+        system_prompt += "\n\n--- Appointment Booking ---\n" + appt_context
 
     # Build messages array
     messages = [{"role": "system", "content": system_prompt}]

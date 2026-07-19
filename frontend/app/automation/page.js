@@ -1,10 +1,12 @@
 'use client';
 import { useState, useEffect } from 'react';
 import { API, safeFetch } from '../lib/utils';
+import { useClient } from '../lib/ClientContext';
 
 export default function Automation() {
   const [health, setHealth] = useState({});
   const [loading, setLoading] = useState(true);
+  const { bUrl, selectedClientId } = useClient();
 
   useEffect(() => {
     async function check() {
@@ -15,19 +17,17 @@ export default function Automation() {
       const [healthData] = await safeFetch(`/health`);
       results.api = healthData ? 'ok' : 'error';
 
-      const [dashData] = await safeFetch(`${API}/dashboard`);
+      const [dashData] = await safeFetch(bUrl('/dashboard'));
       results.db = dashData ? 'ok' : 'error';
 
-      const [aiData] = await safeFetch(`${API}/ai-settings`);
+      const [aiData] = await safeFetch(bUrl('/ai-settings'));
       results.ai = aiData?.api_key ? 'ok' : 'warning';
 
       setHealth(results);
       setLoading(false);
     }
-    check();
-    const iv = setInterval(check, 30000);
-    return () => clearInterval(iv);
-  }, []);
+    if (selectedClientId) { check(); const iv = setInterval(check, 30000); return () => clearInterval(iv); }
+  }, [selectedClientId]);
 
   if (loading) return <div className="loading"><div className="spinner"></div>Checking system health...</div>;
 

@@ -15,9 +15,11 @@ router = APIRouter(prefix="/api/leads", tags=["Leads"])
 
 
 @router.get("", response_model=List[LeadResponse])
-async def list_leads(db: AsyncSession = Depends(get_db)):
-    """List all leads ordered by most recent first."""
-    result = await db.execute(select(Lead).order_by(Lead.created_at.desc()))
+async def list_leads(business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """List all leads for a business, ordered by most recent first."""
+    result = await db.execute(
+        select(Lead).where(Lead.business_id == business_id).order_by(Lead.created_at.desc())
+    )
     return result.scalars().all()
 
 

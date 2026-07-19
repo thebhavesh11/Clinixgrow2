@@ -1,6 +1,7 @@
 'use client';
 import { useState, useEffect, useRef } from 'react';
 import { API, safeFetch, timeAgo, formatTime } from '../lib/utils';
+import { useClient } from '../lib/ClientContext';
 
 export default function Conversations() {
   const [conversations, setConversations] = useState([]);
@@ -13,11 +14,12 @@ export default function Conversations() {
   const [toast, setToast] = useState(null);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
+  const { bUrl, selectedClientId } = useClient();
 
   const showToast = (msg, type) => { setToast({ message: msg, type }); setTimeout(() => setToast(null), 3500); };
 
   const fetchConversations = async () => {
-    const [d] = await safeFetch(`${API}/conversations`);
+    const [d] = await safeFetch(bUrl('/conversations'));
     const list = Array.isArray(d) ? d : [];
     setConversations(list);
     return list;
@@ -30,8 +32,9 @@ export default function Conversations() {
   };
 
   useEffect(() => {
+    setActiveId(null); setMessages([]);
     fetchConversations().then(list => { if (list.length > 0) setActiveId(list[0].id); }).finally(() => setLoading(false));
-  }, []);
+  }, [selectedClientId]);
 
   useEffect(() => { fetchMessages(activeId); }, [activeId]);
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);

@@ -148,6 +148,10 @@ class DashboardResponse(BaseModel):
     active_conversations: int = 0
     total_leads: int = 0
     total_conversations: int = 0
+    appointments_today: int = 0
+    upcoming_appointments: int = 0
+    calls_today: int = 0
+    total_call_minutes: int = 0
 
 
 # ── Business Media ────────────────────────────────────────
@@ -176,3 +180,162 @@ class WhatsAppWebhook(BaseModel):
     name: Optional[str] = "Unknown"
     business_id: int = 1
     is_group: bool = False
+
+
+# ── Working Hours ─────────────────────────────────────────
+class WorkingHoursItem(BaseModel):
+    day_of_week: int  # 0=Monday ... 6=Sunday
+    is_open: int = 1
+    start_time: str = "09:00"
+    end_time: str = "18:00"
+    break_start: str = ""
+    break_end: str = ""
+    slot_duration: int = 30
+
+    @field_validator("day_of_week")
+    @classmethod
+    def validate_day(cls, v):
+        if v < 0 or v > 6:
+            raise ValueError("day_of_week must be 0 (Monday) to 6 (Sunday)")
+        return v
+
+    @field_validator("slot_duration")
+    @classmethod
+    def validate_slot_duration(cls, v):
+        if v not in (15, 30, 45, 60):
+            return 30
+        return v
+
+    @field_validator("is_open")
+    @classmethod
+    def validate_is_open(cls, v):
+        return 1 if v else 0
+
+
+class WorkingHoursResponse(WorkingHoursItem):
+    id: int
+    business_id: int
+
+    class Config:
+        from_attributes = True
+
+
+class WorkingHoursUpdate(BaseModel):
+    """Bulk update — list of all 7 days."""
+    days: list[WorkingHoursItem]
+
+
+# ── Appointment ───────────────────────────────────────────
+class AppointmentCreate(BaseModel):
+    lead_id: Optional[int] = None
+    title: str = "Appointment"
+    date: str  # "YYYY-MM-DD"
+    start_time: str  # "HH:MM"
+    end_time: str = ""  # auto-calculated from slot_duration if empty
+    notes: str = ""
+    booked_by: str = "manual"
+    business_id: int = 1
+
+
+class AppointmentUpdate(BaseModel):
+    title: Optional[str] = None
+    date: Optional[str] = None
+    start_time: Optional[str] = None
+    end_time: Optional[str] = None
+    status: Optional[str] = None
+    notes: Optional[str] = None
+    lead_id: Optional[int] = None
+
+
+class AppointmentResponse(BaseModel):
+    id: int
+    business_id: int
+    lead_id: Optional[int] = None
+    title: str
+    date: str
+    start_time: str
+    end_time: str
+    status: str
+    notes: str
+    booked_by: str
+    reminder_sent: int
+    created_at: datetime
+    lead: Optional[LeadResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class SlotResponse(BaseModel):
+    time: str  # "09:00"
+    end_time: str  # "09:30"
+    available: bool
+
+
+# ── Voice Agent ───────────────────────────────────────────
+class VoiceSettingsResponse(BaseModel):
+    id: int
+    business_id: int
+    vapi_api_key: str = ""
+    vapi_assistant_id: str = ""
+    vapi_phone_id: str = ""
+    phone_number: str = ""
+    agent_name: str = "AI Assistant"
+    voice_provider: str = "11labs"
+    voice_id: str = ""
+    language: str = "hi-IN"
+    first_message: str = ""
+    system_prompt: str = ""
+    can_book_appointments: int = 1
+    can_transfer_call: int = 1
+    webhook_secret: str = ""
+    is_active: int = 0
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class VoiceSettingsUpdate(BaseModel):
+    vapi_api_key: Optional[str] = None
+    vapi_assistant_id: Optional[str] = None
+    vapi_phone_id: Optional[str] = None
+    phone_number: Optional[str] = None
+    agent_name: Optional[str] = None
+    voice_provider: Optional[str] = None
+    voice_id: Optional[str] = None
+    language: Optional[str] = None
+    first_message: Optional[str] = None
+    system_prompt: Optional[str] = None
+    can_book_appointments: Optional[int] = None
+    can_transfer_call: Optional[int] = None
+    webhook_secret: Optional[str] = None
+    is_active: Optional[int] = None
+
+
+class CallLogResponse(BaseModel):
+    id: int
+    business_id: int
+    lead_id: Optional[int] = None
+    vapi_call_id: str = ""
+    phone_number: str = ""
+    direction: str = "inbound"
+    status: str = "queued"
+    duration_seconds: int = 0
+    cost: float = 0.0
+    recording_url: str = ""
+    transcript: str = ""
+    summary: str = ""
+    ended_reason: str = ""
+    appointments_booked: int = 0
+    created_at: datetime
+    lead: Optional[LeadResponse] = None
+
+    class Config:
+        from_attributes = True
+
+
+class OutboundCallRequest(BaseModel):
+    phone_number: str
+    lead_id: Optional[int] = None
+    business_id: int = 1

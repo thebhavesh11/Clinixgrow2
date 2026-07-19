@@ -29,11 +29,12 @@ class LeadStatusUpdate(BaseModel):
 
 
 @router.get("", response_model=List[ConversationResponse])
-async def list_conversations(db: AsyncSession = Depends(get_db)):
-    """List all conversations with lead info, ordered by most recent."""
+async def list_conversations(business_id: int = 1, db: AsyncSession = Depends(get_db)):
+    """List all conversations for a business with lead info, ordered by most recent."""
     result = await db.execute(
         select(Conversation)
         .options(selectinload(Conversation.lead))
+        .where(Conversation.business_id == business_id)
         .order_by(Conversation.created_at.desc())
     )
     return result.scalars().all()
