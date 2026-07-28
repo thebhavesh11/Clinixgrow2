@@ -6,6 +6,7 @@ import json
 import asyncio
 import logging
 import httpx
+from datetime import datetime, timedelta
 from collections import OrderedDict
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
@@ -180,7 +181,6 @@ async def _process_message_inner(
     for appt_date, appt_time in appt_tags:
         try:
             # Get slot duration from working hours
-            from datetime import timedelta as td
             target_dt = datetime.strptime(appt_date, "%Y-%m-%d")
             wh_result = await db.execute(
                 select(WorkingHours).where(
@@ -191,7 +191,7 @@ async def _process_message_inner(
             wh = wh_result.scalar_one_or_none()
             duration = wh.slot_duration if wh else 30
             st = datetime.strptime(appt_time, "%H:%M")
-            end_time = (st + td(minutes=duration)).strftime("%H:%M")
+            end_time = (st + timedelta(minutes=duration)).strftime("%H:%M")
 
             # Check if slot is actually available (no conflict)
             conflict_result = await db.execute(
@@ -291,7 +291,6 @@ async def _process_message_inner(
 
 async def _build_appointment_context(db: AsyncSession, business_id: int, lead_id: int) -> str:
     """Build appointment context string for AI system prompt."""
-    from datetime import timedelta as td
     from routers.appointments import _generate_slots
 
     lines = []
@@ -313,7 +312,7 @@ async def _build_appointment_context(db: AsyncSession, business_id: int, lead_id
     wh_all = {wh.day_of_week: wh for wh in result.scalars().all()}
 
     # Get appointments for next 7 days
-    date_range = [(today + td(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+    date_range = [(today + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
     result = await db.execute(
         select(Appointment).where(
             Appointment.business_id == business_id,
@@ -328,7 +327,7 @@ async def _build_appointment_context(db: AsyncSession, business_id: int, lead_id
 
     lines.append("Available slots (next 7 days):")
     for i in range(7):
-        dt = today + td(days=i)
+        dt = today + timedelta(days=i)
         date_str = dt.strftime("%Y-%m-%d")
         day_name = day_names[dt.weekday()]
         wh = wh_all.get(dt.weekday())

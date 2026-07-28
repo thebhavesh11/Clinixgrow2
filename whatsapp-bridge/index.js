@@ -154,7 +154,8 @@ function initClient() {
                 if (!settings || !settings.group_replies) return;
             }
 
-            const phone = msg.from.replace('@c.us', '').replace('@g.us', '');
+            // Strip all WhatsApp suffixes: @c.us, @g.us, @lid
+            const phone = msg.from.replace(/@c\.us$/, '').replace(/@g\.us$/, '').replace(/@lid$/, '');
             const contact = await msg.getContact();
             const name = contact?.pushname || contact?.name || 'Unknown';
             const isGroup = msg.from.includes('@g.us');
@@ -170,12 +171,14 @@ function initClient() {
 
             console.log(`[Bridge] ${isGroup ? 'Group' : isSavedContact ? 'Contact' : 'New'} message from ${name} (${phone}): ${(msg.body || '').substring(0, 50)}...`);
 
+            // Send to backend with clean phone + original msg.from for reply routing
             await axios.post(`${BACKEND_URL}/api/whatsapp/webhook`, {
                 phone: isGroup ? msg.from : phone,
                 message: msg.body || '',
                 name: name,
                 business_id: 1,
                 is_group: isGroup,
+                reply_to: msg.from, // Preserve original WhatsApp ID for sending replies
             }, { timeout: 30000 });
         } catch (err) {
             console.error('[Bridge] Message handler error:', err.message);
@@ -213,8 +216,24 @@ app.post('/send', async (req, res) => {
     if (!phone || !message) return res.status(400).json({ success: false, error: 'Missing phone or message' });
     if (!client || !isConnected) return res.status(503).json({ success: false, error: 'Not connected' });
     try {
-        const chatId = phone.includes('@') ? phone : `${phone}@c.us`;
+        // If phone already has @ suffix, use it directly; otherwise try @lid then @c.us
+        let chatId;
+        if (phone.includes('@')) {
+            chatId = phone;
+        } else {
+            // Try @lid first (newer format), fallback to @c.us
+            try {
+                chatId = `${phone}@lid`;
+                await client.sendMessage(chatId, message);
+                console.log(`[Bridge] Sent to ${phone} via @lid`);
+                return res.json({ success: true });
+            } catch (lidErr) {
+                console.log(`[Bridge] @lid failed for ${phone}, trying @c.us: ${lidErr.message}`);
+                chatId = `${phone}@c.us`;
+            }
+        }
         await client.sendMessage(chatId, message);
+        console.log(`[Bridge] Sent to ${phone} via ${chatId.includes('@lid') ? '@lid' : '@c.us'}`);
         res.json({ success: true });
     } catch (err) {
         console.error('[Bridge] Send error:', err.message);

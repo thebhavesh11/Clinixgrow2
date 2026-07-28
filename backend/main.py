@@ -19,7 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("smartflow")
 
 from database import engine, Base
-from routers import business, ai_settings, leads, conversations, dashboard, whatsapp, media, appointments, voice, clients
+from routers import business, ai_settings, leads, conversations, dashboard, whatsapp, media, appointments, voice, clients, demo_chat
 
 
 @asynccontextmanager
@@ -124,6 +124,7 @@ app.include_router(media.router)
 app.include_router(appointments.router)
 app.include_router(voice.router)
 app.include_router(clients.router)
+app.include_router(demo_chat.router)
 
 
 @app.get("/")

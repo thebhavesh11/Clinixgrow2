@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { API, safeFetch, timeAgo, formatTime } from '../lib/utils';
 import { useClient } from '../lib/ClientContext';
+import DemoChat from '../components/DemoChat';
 
 export default function Conversations() {
   const [conversations, setConversations] = useState([]);
@@ -12,6 +13,7 @@ export default function Conversations() {
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [toast, setToast] = useState(null);
+  const [showDemo, setShowDemo] = useState(false);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
   const { bUrl, selectedClientId } = useClient();
@@ -103,7 +105,10 @@ export default function Conversations() {
       <div className="split-pane">
         <div className="split-left">
           <div style={{ padding: 16, borderBottom: '1px solid var(--border-color)' }}>
-            <h2 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Conversations</h2>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+              <h2 style={{ fontSize: 18, fontWeight: 700 }}>Conversations</h2>
+              <button className="demo-chat-trigger" onClick={() => setShowDemo(true)}>🧪 Test AI</button>
+            </div>
             <p style={{ fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 12 }}>All WhatsApp threads managed by your AI</p>
             <input className="form-input" placeholder="🔍 Search conversations..." value={search} onChange={e => setSearch(e.target.value)} style={{ fontSize: 12, padding: '8px 12px' }} />
           </div>
@@ -201,6 +206,7 @@ export default function Conversations() {
         </div>
       </div>
       {toast && <div className={`toast toast-${toast.type}`}>{toast.type === 'success' ? '✅' : '❌'} {toast.message}</div>}
+      {showDemo && <DemoChat onClose={() => setShowDemo(false)} />}
     </div>
   );
 }
