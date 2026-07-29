@@ -50,7 +50,9 @@ export async function safeFetch(url, options = {}) {
  */
 export function timeAgo(dt) {
   if (!dt) return '';
-  const m = Math.floor((Date.now() - new Date(dt).getTime()) / 60000);
+  // Fix for SQLAlchemy naive datetimes — treat as UTC
+  const dateStr = (typeof dt === 'string' && !dt.endsWith('Z') && !dt.includes('+')) ? dt + 'Z' : dt;
+  const m = Math.floor((Date.now() - new Date(dateStr).getTime()) / 60000);
   if (m < 1) return 'Just now';
   if (m < 60) return `${m}m ago`;
   const h = Math.floor(m / 60);
@@ -74,5 +76,6 @@ export function scoreColor(score) {
  */
 export function formatTime(dt) {
   if (!dt) return '';
-  return new Date(dt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const dateStr = (typeof dt === 'string' && !dt.endsWith('Z') && !dt.includes('+')) ? dt + 'Z' : dt;
+  return new Date(dateStr).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
