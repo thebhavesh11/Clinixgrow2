@@ -406,7 +406,7 @@ def _clean_ai_reply(raw: str) -> str:
             # If there's real content AFTER the parentheses, use that
             if after_block and len(after_block) > 10:
                 text = after_block
-            elif len(reasoning_block) > 80:
+            elif len(reasoning_block) > 30:
                 # Entire reply is reasoning — extract the best reply from within
                 text = _extract_reply_from_reasoning(reasoning_block[1:-1])
 
