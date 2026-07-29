@@ -379,6 +379,95 @@ async def _build_appointment_context(db: AsyncSession, business_id: int, lead_id
     return "\n".join(lines)
 
 
+def _clean_ai_reply(raw: str) -> str:
+    """Strip internal reasoning / monologue that some models leak."""
+    text = raw.strip()
+    if not text:
+        return text
+
+    # 1. Remove <think>...</think> blocks (DeepSeek, etc.)
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+    # 2. Handle text starting with '(' — use bracket counting to find matching ')'
+    if text.startswith('(') and len(text) > 30:
+        depth = 0
+        close_pos = -1
+        for i, ch in enumerate(text):
+            if ch == '(':
+                depth += 1
+            elif ch == ')':
+                depth -= 1
+                if depth == 0:
+                    close_pos = i
+                    break
+        if close_pos > 0:
+            reasoning_block = text[:close_pos + 1]
+            after_block = text[close_pos + 1:].strip()
+            # If there's real content AFTER the parentheses, use that
+            if after_block and len(after_block) > 10:
+                text = after_block
+            elif len(reasoning_block) > 80:
+                # Entire reply is reasoning — extract the best reply from within
+                text = _extract_reply_from_reasoning(reasoning_block[1:-1])
+
+    # 3. Detect reasoning even without parentheses (some models dump raw thoughts)
+    reasoning_markers = ['let me ', 'i need to ', 'i should ', 'i must ', 'checking ',
+                         'looking at ', 'analyzing ', 'the user ', 'my response ',
+                         'word count', 'draft:', 'alternative:', 'best approach:']
+    lines = text.split('\n')
+    if len(lines) > 5:
+        first_3 = '\n'.join(lines[:3]).lower()
+        if any(marker in first_3 for marker in reasoning_markers):
+            # Looks like reasoning dump — try to extract actual reply
+            text = _extract_reply_from_reasoning(text)
+
+    # 4. Remove **action asterisks** like *thinks* or *checks database*
+    text = re.sub(r'\*[^*]{3,80}\*\s*', '', text).strip()
+
+    # 5. If still empty after cleaning, return a safe fallback
+    if not text:
+        text = "Thank you for your message! Our team will get back to you shortly."
+
+    return text
+
+
+def _extract_reply_from_reasoning(inner: str) -> str:
+    """Extract the actual customer-facing reply from a reasoning dump."""
+    # Strategy 1: Look for Draft/Reply/Response patterns with quotes
+    draft = re.search(
+        r'(?:Draft|Final|Response|Reply|Alternative):\s*["\u201c\u201d\'](.*?)["\u201c\u201d\']',
+        inner, re.DOTALL
+    )
+    if draft:
+        return draft.group(1).strip()
+
+    # Strategy 2: Look for quoted sentences (the model often quotes its own reply)
+    quotes = re.findall(r'[\u201c"](.*?)[\u201d"]', inner, re.DOTALL)
+    # Pick the longest quote that looks like a customer message
+    best_quote = ""
+    for q in quotes:
+        q = q.strip()
+        if 20 < len(q) < 500 and not any(kw in q.lower() for kw in ['must not', 'should not', 'let me', 'risky']):
+            if len(q) > len(best_quote):
+                best_quote = q
+    if best_quote:
+        return best_quote
+
+    # Strategy 3: Take the last clean non-analysis line
+    analysis_keywords = ['must not', 'should not', 'let me', 'i need to', 'checking', 'analyzing',
+                         'looking at', 'important:', 'risky', 'better to be', 'wait:', 'but wait',
+                         'word count', 'strict', 'alternative:', 'the user', 'my response',
+                         'i should', 'i must', 'best approach', 'not assume']
+    lines = [l.strip() for l in inner.split('\n') if l.strip() and not l.strip().startswith(('-', '*', '#', '>'))]
+    for line in reversed(lines):
+        line_lower = line.lower()
+        if len(line) < 400 and not any(kw in line_lower for kw in analysis_keywords):
+            return line.strip('"\u201c\u201d\' ')
+
+    # Fallback
+    return ""
+
+
 async def generate_ai_reply(ai_settings, business, history, current_message, media_files=None, appt_context="") -> str:
     """Generate an AI reply using the configured provider."""
     if not ai_settings or not ai_settings.api_key:
@@ -416,6 +505,8 @@ async def generate_ai_reply(ai_settings, business, history, current_message, med
     if appt_context:
         system_prompt += "\n\n--- Appointment Booking ---\n" + appt_context
 
+    system_prompt += "\n\n--- OUTPUT RULES (MANDATORY) ---\nYou MUST only output the FINAL customer-facing message. Do NOT include internal thoughts, reasoning, monologue, analysis, or drafts. Do NOT wrap your response in parentheses () or <think> tags. Do NOT use asterisk actions like *thinks*. Your entire output goes DIRECTLY to the customer via WhatsApp."
+
     # Build messages array
     messages = [{"role": "system", "content": system_prompt}]
     for msg in history:
@@ -449,6 +540,7 @@ async def generate_ai_reply(ai_settings, business, history, current_message, med
                 max_tokens=ai_settings.max_tokens,
             )
             reply = response.choices[0].message.content.strip()
+            reply = _clean_ai_reply(reply)
             logger.info(f"[Engine] AI reply generated ({len(reply)} chars)")
             return reply
 
@@ -468,6 +560,7 @@ async def generate_ai_reply(ai_settings, business, history, current_message, med
             chat = gmodel.start_chat(history=chat_history)
             response = await asyncio.to_thread(chat.send_message, current_message)
             reply = response.text.strip()
+            reply = _clean_ai_reply(reply)
             logger.info(f"[Engine] AI reply generated ({len(reply)} chars)")
             return reply
 
