@@ -26,15 +26,17 @@ if [ ! -d "$SCRIPT_DIR/whatsapp-bridge/node_modules" ]; then
     echo "[*] WhatsApp bridge dependencies not found, installing..."
     cd "$SCRIPT_DIR/whatsapp-bridge" && npm install
 fi
-if ! python3 -c "import fastapi" 2>/dev/null; then
-    echo "[*] Backend dependencies not found, installing..."
-    cd "$SCRIPT_DIR/backend" && python3 -m pip install -r requirements.txt
+if [ ! -d "$SCRIPT_DIR/backend/venv" ]; then
+    echo "[*] Backend virtual environment not found, creating and installing dependencies..."
+    cd "$SCRIPT_DIR/backend"
+    python3 -m venv venv
+    ./venv/bin/pip install -r requirements.txt
 fi
 
 # Start Backend (FastAPI)
 echo "[2/4] Starting Backend (port 8000)..."
 cd "$SCRIPT_DIR/backend"
-python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
+./venv/bin/python3 -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload &
 BACKEND_PID=$!
 sleep 3
 
